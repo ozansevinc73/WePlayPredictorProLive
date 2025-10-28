@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WePlay Predictor PRO AI</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0a0f14">
+<style>
+body{margin:0;background:#0a0f14;color:#eaf2ff;font-family:Inter,system-ui}
+.wrap{max-width:900px;margin:auto;padding:20px}
+button{border:1px solid #1f2a40;background:#111a28;color:#eaf2ff;border-radius:10px;
+padding:10px 12px;margin:4px;font-weight:700}
+button:hover{background:#1a2438}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;
+background:#101a28;border:1px solid #203047;margin:3px}
+.card{background:#0f1722;border:1px solid #172233;border-radius:12px;padding:10px;margin-top:10px}
+#log{max-height:200px;overflow:auto;background:#0b1420;border:1px solid #16263c;border-radius:12px;
+padding:10px;font-family:monospace;font-size:12px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2>WePlay Predictor <span style="color:#22c1ff">PRO AI</span></h2>
+  <div id="countBox" class="pill">Kayıt: <b id="count">0</b></div>
+  <button id="undoBtn">Geri Al</button>
+  <button id="clearBtn">Temizle</button>
+  <button id="enableNotif">Bildirimleri Aç</button>
+
+  <div class="card" id="symgrid"></div>
+
+  <div class="card">
+    <div class="pill">AI Tahminleri (Top-3)</div>
+    <div id="chips"></div>
+    <p id="probline"></p>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div>LOG</div><button id="clearLog">Temizle</button>
+    </div>
+    <div id="log"></div>
+  </div>
+</div>
+
+<script>
+const SYMBOLS=[
+ {code:"ELMA",emoji:"🍎"},{code:"PORTAKAL",emoji:"🍊"},{code:"MARUL",emoji:"🥬"},
+ {code:"KARPUZ",emoji:"🍉"},{code:"BALIK",emoji:"🐟"},{code:"HAMBURGER",emoji:"🍔"},
+ {code:"ISTAKOZ",emoji:"🦞"},{code:"TAVUK",emoji:"🍗"}
+];
+const nameMap=Object.fromEntries(SYMBOLS.map(s=>[s.code,s]));
+let seq=JSON.parse(localStorage.getItem("seq")||"[]"),topK=3;
+const weights={window:6,decay:0.985,alpha:0.5};
+function log(m){let a=JSON.parse(localStorage.getItem("log")||"[]");
+a.push("["+new Date().toLocaleTimeString()+"] "+m);if(a.length>100)a.shift();
+localStorage.setItem("log",JSON.stringify(a));renderLog();}
+function renderLog(){let a=JSON.parse(localStorage.getItem("log")||"[]");
+document.getElementById("log").textContent=a.join("\\n");}
+function recencyWeights(n,d){let a=[...Array(n)].map((_,i)=>Math.pow(d,(n-1)-i));
+let s=a.reduce((x,y)=>x+y,0);return a.map(v=>v/s);}
+function transitionMatrix(s){let u=[...new Set(s)],i=Object.fromEntries(u.map((x,j)=>[x,j]));
+let m=Array.from({length:u.length},()=>Array(u.length).fill(0));
+for(let x=0;x<s.length-1;x++)m[i[s[x]]][i[s[x+1]]]+=1;
+for(let r=0;r<m.length;r++){let sum=m[r].reduce((a,b)=>a+b,0);
+if(sum)for(let c=0;c<m[r].length;c++)m[r][c]/=sum;}
+return{u,m,i};}
+function nextProbs(a,p){if(!a.length)return{};let{window,decay,alpha}=p;
+let s=a.slice(-window),w=recencyWeights(s.length,decay),f=new Map();
+s.forEach((x,i)=>f.set(x,(f.get(x)||0)+w[i]));
+let prior=Object.fromEntries([...f.entries()].map(([k,v])=>[k,v]));
+let t=Object.values(prior).reduce((x,y)=>x+y,0)||1;for(let k in prior)prior[k]/=t;
+let{u,m,i}=transitionMatrix(s),last=s[s.length-1],trans={};
+if(i[last]!=null){let row=m[i[last]];u.forEach((x,j)=>trans[x]=row[j]||0);}
+else u.forEach(x=>trans[x]=1/u.length);
+let all=new Set([...Object.keys(prior),...Object.keys(trans),...SYMBOLS.map(s=>s.code)]);
+let comb={};all.forEach(x=>comb[x]=alpha*(prior[x]||0)+(1-alpha)*(trans[x]||0));
+let z=Object.values(comb).reduce((x,y)=>x+y,0)||1;for(let k in comb)comb[k]/=z;return comb;}
+function suggestTop(c,k){return Object.entries(c).sort((a,b)=>b[1]-a[1]).slice(0,k);}
+function add(code){seq.push(code);localStorage.setItem("seq",JSON.stringify(seq));
+document.getElementById("count").textContent=seq.length;log("Eklendi: "+code);renderCore();}
+function undo(){seq.pop();localStorage.setItem("seq",JSON.stringify(seq));
+document.getElementById("count").textContent=seq.length;log("Son kayıt silindi");renderCore();}
+function clearAll(){seq=[];localStorage.setItem("seq","[]");log("Tüm veriler silindi");renderCore();}
+function renderCore(){if(!seq.length){document.getElementById("chips").textContent="";return;}
+let comb=nextProbs(seq,weights),top=suggestTop(comb,topK);
+let c=document.getElementById("chips");c.innerHTML="";
+top.forEach(([code,p])=>{let s=nameMap[code];let e=document.createElement("span");
+e.className="pill";e.textContent=`${s.emoji} ${(p*100).toFixed(1)}%`;c.appendChild(e);});
+document.getElementById("probline").textContent="Tahminler: "+top.map(([c,p])=>nameMap[c].emoji).join(" ");
+renderLog();}
+document.getElementById("undoBtn").onclick=undo;
+document.getElementById("clearBtn").onclick=clearAll;
+document.getElementById("enableNotif").onclick=()=>Notification.requestPermission();
+document.getElementById("clearLog").onclick=()=>{localStorage.removeItem("log");renderLog();}
+let g=document.getElementById("symgrid");
+SYMBOLS.forEach(s=>{let b=document.createElement("button");
+b.textContent=s.emoji+" "+s.code;b.onclick=()=>add(s.code);g.appendChild(b);});
+document.getElementById("count").textContent=seq.length;
+renderCore();
+</script>
+</body>
+</html>
